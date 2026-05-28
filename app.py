@@ -2,6 +2,15 @@ import streamlit as st
 import numpy as np
 import pickle
 import os
+import gdown
+
+# ── Download models.pkl from Google Drive if not present ──────────────────────
+MODEL_PATH = "models.pkl"
+GDRIVE_ID  = "1pF4_z24bReeLPHkLUZ635sSyGGb5QX0R"
+
+if not os.path.exists(MODEL_PATH):
+    with st.spinner("⏬ Downloading model... please wait (~374 MB)"):
+        gdown.download(f"https://drive.google.com/uc?id={GDRIVE_ID}", MODEL_PATH, quiet=False)
 
 st.set_page_config(
     page_title="Solar & Wind Energy Predictor",
@@ -9,7 +18,6 @@ st.set_page_config(
     layout="centered"
 )
 
-# ── Styling ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
@@ -46,32 +54,17 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Hero ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="hero">
     <h1>⚡ Solar & Wind Energy Predictor</h1>
-    <p>Germany Renewable Energy Model · Trained on 2015–2021 data · Random Forest + SVM</p>
+    <p>Germany Renewable Energy Model · Trained on 2015–2021 data · Random Forest</p>
 </div>
 """, unsafe_allow_html=True)
-
-# ── Load models.pkl ────────────────────────────────────────────────────────────
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "models.pkl")
 
 @st.cache_resource(show_spinner="Loading prediction models…")
 def load_bundle(path):
     with open(path, "rb") as f:
         return pickle.load(f)
-
-if not os.path.exists(MODEL_PATH):
-    st.error("⚠️ `models.pkl` not found in the app folder.")
-    st.markdown("""
-**To fix this:**
-1. Run `train_and_save.py` at the end of your Colab notebook
-2. Download the generated `models.pkl`
-3. Place it in the same folder as `app.py`
-4. Push to GitHub and redeploy
-""")
-    st.stop()
 
 bundle = load_bundle(MODEL_PATH)
 solar_model   = bundle["solar_model"]
@@ -80,9 +73,7 @@ wind_model    = bundle["wind_model"]
 wind_scaler   = bundle["wind_scaler"]
 stats         = bundle["stats"]
 
-# ── Tab layout ─────────────────────────────────────────────────────────────────
 tab_solar, tab_wind = st.tabs(["☀️ Solar Energy", "💨 Wind Energy"])
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SOLAR TAB
@@ -93,59 +84,53 @@ with tab_solar:
 
     sp = stats["solar_profile"]
 
-    with st.container():
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            solar_profile = st.slider(
-                "Solar Profile (Capacity Factor)",
-                min_value=0.0,
-                max_value=round(sp["max"], 3),
-                value=round(sp["mean"], 3),
-                step=0.001,
-                help="Ratio of actual solar irradiance to maximum possible. 0 = night/cloudy, ~0.7–0.9 = bright noon."
-            )
-        with col2:
-            st.metric("You entered", f"{solar_profile:.3f}")
-            level = "🌑 Night" if solar_profile < 0.05 else \
-                    "🌥️ Cloudy" if solar_profile < 0.2 else \
-                    "⛅ Partly cloudy" if solar_profile < 0.4 else \
-                    "🌤️ Mostly sunny" if solar_profile < 0.65 else "☀️ Bright sun"
-            st.caption(level)
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        solar_profile = st.slider(
+            "Solar Profile (Capacity Factor)",
+            min_value=0.0,
+            max_value=round(sp["max"], 3),
+            value=round(sp["mean"], 3),
+            step=0.001,
+            help="0 = night/cloudy, ~0.7–0.9 = bright noon"
+        )
+    with col2:
+        st.metric("You entered", f"{solar_profile:.3f}")
+        level = "🌑 Night"        if solar_profile < 0.05 else \
+                "🌥️ Cloudy"       if solar_profile < 0.2  else \
+                "⛅ Partly cloudy" if solar_profile < 0.4  else \
+                "🌤️ Mostly sunny"  if solar_profile < 0.65 else "☀️ Bright sun"
+        st.caption(level)
 
     if st.button("🔮 Predict Solar Output", use_container_width=True, type="primary"):
-        X = np.array([[solar_profile]])
+        X        = np.array([[solar_profile]])
         X_scaled = solar_scaler.transform(X)
-        pred_mw  = float(solar_model.predict(X_scaled)[0])
-        pred_mw  = max(0.0, pred_mw)   # can't be negative
-
-        pct = (pred_mw / stats["solar_generation_max"]) * 100
+        pred_mw  = max(0.0, float(solar_model.predict(X_scaled)[0]))
+        pct      = (pred_mw / stats["solar_generation_max"]) * 100
 
         st.markdown(f"""
         <div class="result-card result-solar">
             <div class="value">{pred_mw:,.0f} MW</div>
             <div class="label">Predicted Solar Generation</div>
-            <div class="sub">{pct:.1f}% of historical peak capacity ({stats['solar_generation_max']:,.0f} MW)</div>
+            <div class="sub">{pct:.1f}% of historical peak ({stats['solar_generation_max']:,.0f} MW)</div>
         </div>
         """, unsafe_allow_html=True)
 
         avg = stats["solar_generation_mean"]
         if pred_mw > avg * 1.3:
-            st.markdown('<div class="tip-box">✅ <b>Above average</b> solar output — excellent conditions for solar harvesting.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-box">✅ <b>Above average</b> solar output — excellent conditions.</div>', unsafe_allow_html=True)
         elif pred_mw < avg * 0.3:
-            st.markdown('<div class="warn-box">⚠️ <b>Low output</b> — cloudy or night-time conditions. Storage/backup may be needed.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="warn-box">⚠️ <b>Low output</b> — cloudy or night-time. Storage/backup may be needed.</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="tip-box">📊 <b>Average</b> solar output expected for these conditions.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-box">📊 <b>Average</b> solar output expected.</div>', unsafe_allow_html=True)
 
-    st.markdown("---")
     with st.expander("ℹ️ What is Solar Profile?"):
         st.markdown("""
 - **Solar Profile** = capacity factor = actual output ÷ maximum possible output
-- Ranges from **0** (night or fully overcast) to ~**0.85** (peak summer noon)
-- Germany average during daylight hours: ~**0.10 – 0.35**
-- Source: [Open Power System Data](https://open-power-system-data.org/)
-- Model: **Random Forest** (best performer for solar in this dataset)
+- Ranges from **0** (night/overcast) to ~**0.85** (peak summer noon)
+- Germany average during daylight: ~**0.10 – 0.35**
+- Model: **Random Forest**
         """)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  WIND TAB
@@ -177,39 +162,33 @@ with tab_wind:
             "Offshore Wind Profile",
             min_value=0.0, max_value=round(woff["max"], 3),
             value=round(woff["mean"], 3), step=0.001,
-            help="Capacity factor for offshore wind farms (North/Baltic Sea)"
+            help="Capacity factor for offshore wind farms"
         )
-
-        # Wind strength indicator
         avg_wind = (wind_onshore + wind_offshore) / 2
-        strength = "🌬️ Calm"       if avg_wind < 0.1  else \
-                   "💨 Light"      if avg_wind < 0.25 else \
-                   "🌀 Moderate"   if avg_wind < 0.45 else \
-                   "⛈️ Strong"     if avg_wind < 0.65 else \
-                   "🌪️ Very strong"
+        strength = "🌬️ Calm"        if avg_wind < 0.1  else \
+                   "💨 Light"       if avg_wind < 0.25 else \
+                   "🌀 Moderate"    if avg_wind < 0.45 else \
+                   "⛈️ Strong"      if avg_wind < 0.65 else "🌪️ Very strong"
         st.metric("Wind Strength", strength)
-        st.metric("Avg Capacity", f"{avg_wind:.3f}")
+        st.metric("Avg Capacity",  f"{avg_wind:.3f}")
 
     if st.button("🔮 Predict Wind Output", use_container_width=True, type="primary"):
-        # Use only the features the model was trained on
         wind_feats = bundle["wind_features"]
         feat_map   = {
             "DE_wind_profile":           wind_profile,
             "DE_wind_onshore_profile":   wind_onshore,
             "DE_wind_offshore_profile":  wind_offshore,
         }
-        X       = np.array([[feat_map[f] for f in wind_feats]])
+        X        = np.array([[feat_map[f] for f in wind_feats]])
         X_scaled = wind_scaler.transform(X)
-        pred_mw  = float(wind_model.predict(X_scaled)[0])
-        pred_mw  = max(0.0, pred_mw)
-
-        pct = (pred_mw / stats["wind_generation_max"]) * 100
+        pred_mw  = max(0.0, float(wind_model.predict(X_scaled)[0]))
+        pct      = (pred_mw / stats["wind_generation_max"]) * 100
 
         st.markdown(f"""
         <div class="result-card result-wind">
             <div class="value">{pred_mw:,.0f} MW</div>
             <div class="label">Predicted Wind Generation</div>
-            <div class="sub">{pct:.1f}% of historical peak capacity ({stats['wind_generation_max']:,.0f} MW)</div>
+            <div class="sub">{pct:.1f}% of historical peak ({stats['wind_generation_max']:,.0f} MW)</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -217,20 +196,17 @@ with tab_wind:
         if pred_mw > avg * 1.3:
             st.markdown('<div class="tip-box">✅ <b>High wind output</b> — excellent generation conditions.</div>', unsafe_allow_html=True)
         elif pred_mw < avg * 0.4:
-            st.markdown('<div class="warn-box">⚠️ <b>Low wind output</b> — calm conditions. Grid may need backup sources.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="warn-box">⚠️ <b>Low wind output</b> — calm conditions. Grid may need backup.</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="tip-box">📊 <b>Average wind output</b> expected for these conditions.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="tip-box">📊 <b>Average wind output</b> expected.</div>', unsafe_allow_html=True)
 
-    st.markdown("---")
     with st.expander("ℹ️ What are Wind Profiles?"):
         st.markdown("""
-- **Wind Profile** = capacity factor = actual output ÷ installed capacity
-- **Onshore**: land-based turbines (more numerous but lower capacity factor ~0.25–0.35)
-- **Offshore**: sea-based turbines (fewer but higher capacity factor ~0.35–0.55, steadier wind)
-- Germany has ~60 GW onshore + ~8 GW offshore installed capacity
-- Model: **SVM with RBF kernel** (best performer for wind in this dataset)
+- **Onshore**: land-based turbines (~0.25–0.35 capacity factor)
+- **Offshore**: sea-based turbines (~0.35–0.55, steadier wind)
+- Germany: ~60 GW onshore + ~8 GW offshore installed
+- Model: **Random Forest**
         """)
 
-# ── Footer ─────────────────────────────────────────────────────────────────────
 st.markdown("---")
-st.caption("Built with Streamlit · Models: Random Forest (Solar) & SVM (Wind) · Data: Open Power System Data · Germany 2015–2021")
+st.caption("Built with Streamlit · Model: Random Forest · Data: Open Power System Data · Germany 2015–2021")
